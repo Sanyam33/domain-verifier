@@ -13,7 +13,7 @@ SECRET_KEY = os.getenv("SECRET_KEY").encode()
 META_TAG_NAME = os.getenv("META_TAG_NAME")
 FILE_PREFIX = os.getenv("FILE_PREFIX")
 
-domain_router = APIRouter(prefix="/api/v1/domain-verify", tags=["domain"])
+domain_router = APIRouter(prefix="/api/v1", tags=["domain"])
 
 
 def generate_hmac_token(domain: str) -> str:
@@ -116,7 +116,7 @@ def request_verification_file(payload: DomainCreate):
         "filename": filename,
         "file_content": file_content,
         "upload_instruction": "Upload this file to the root of your website.",
-        "expected_url": f"https://{domain}/{filename}"
+        "expected_url": f"{domain}/{filename}"
     }
 
 
