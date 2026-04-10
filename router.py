@@ -154,7 +154,16 @@ async def verify_verification_file(payload: DomainCreate):
             if str(response.url) != file_url:
                 return {
                     "success": False,
-                    "message": "Verification file not found (redirected to a different page).",
+                    "message": f"The verification file was not found. Your server redirected the request to '{response.url}' ",
+                    "checked_url": file_url
+                }
+
+             # 3. Check content type — must be plain text, not HTML or JSON
+            content_type = response.headers.get("content-type", "")
+            if "text/plain" not in content_type:
+                return {
+                    "success": False,
+                    "message": f"Verification file not found (unexpected content type: {content_type}).",
                     "checked_url": file_url
                 }
 
