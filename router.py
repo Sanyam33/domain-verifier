@@ -160,7 +160,7 @@ async def verify_verification_file(payload: DomainCreate):
 
             file_content = response.text.strip()
 
-            if expected_token == file_content:
+            if expected_token in file_content:
                 return {
                     "success": True,
                     "message": "Domain verified successfully using HTML file.",
