@@ -60,12 +60,6 @@ async def verify_site(payload: DomainCreate):
                     "message": f"Could not reach site. Status code: {response.status_code}"
                 }
 
-            if response.url.path != httpx.URL(file_url).path:
-                return {
-                    "success": False,
-                    "message": "Verification failed: Server redirected to a different page.",
-                    "checked_url": str(response.url)
-            }
 
             soup = BeautifulSoup(response.text, "html.parser")
             
@@ -152,16 +146,9 @@ async def verify_verification_file(payload: DomainCreate):
                     "checked_url": file_url
                 }
 
-            if response.url.path != httpx.URL(file_url).path:
-                return {
-                    "success": False,
-                    "message": "Verification failed: Server redirected to a different page.",
-                    "checked_url": str(response.url)
-            }
-
             file_content = response.text.strip()
 
-            if expected_token in file_content:
+            if expected_token == file_content:
                 return {
                     "success": True,
                     "message": "Domain verified successfully using HTML file.",
