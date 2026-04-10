@@ -60,12 +60,6 @@ async def verify_site(payload: DomainCreate):
                     "message": f"Could not reach site. Status code: {response.status_code}"
                 }
 
-            if str(response.url) != target_url:
-                return {
-                    "success": False,
-                    "message": "meta tag not found (redirected to a different page)."
-                }
-
             soup = BeautifulSoup(response.text, "html.parser")
             
             tag = soup.find("meta", attrs={"name": META_TAG_NAME})
