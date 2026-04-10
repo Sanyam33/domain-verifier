@@ -60,6 +60,11 @@ async def verify_site(payload: DomainCreate):
                     "message": f"Could not reach site. Status code: {response.status_code}"
                 }
 
+            if str(response.url) != file_url:
+                return {
+                    "success": False,
+                    "message": "meta tag not found (redirected to a different page)."
+                }
 
             soup = BeautifulSoup(response.text, "html.parser")
             
@@ -143,6 +148,13 @@ async def verify_verification_file(payload: DomainCreate):
                 return {
                     "success": False,
                     "message": f"Verification file not found. Status code: {response.status_code}",
+                    "checked_url": file_url
+                }
+
+            if str(response.url) != file_url:
+                return {
+                    "success": False,
+                    "message": "Verification file not found (redirected to a different page).",
                     "checked_url": file_url
                 }
 
