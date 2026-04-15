@@ -318,7 +318,7 @@ async def verify_verification_file(payload: DomainCreate):
     except httpx.RequestError as e:
         return {
             "success": False,
-            "message": f"Connection error while accessing site: {str(e)}",
+            "message": f"Connection error while accessing site: {str(e)}"
         }
 
 
