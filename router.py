@@ -34,6 +34,25 @@ def normalize_domain(domain: str) -> str:
 def normalize_path(path: str) -> str:
     return path.rstrip("/")
 
+# def is_valid_redirect(original_url: str, final_url: str) -> bool:
+#     orig = urlparse(original_url)
+#     final = urlparse(final_url)
+
+#     orig_domain = orig.netloc.replace("www.", "")
+#     final_domain = final.netloc.replace("www.", "")
+
+#     if orig_domain != final_domain:
+#         return False
+
+#     # Normalize paths before comparing
+#     if normalize_path(orig.path) != normalize_path(final.path):
+#         return False
+
+#     return True
+
+# def is_canonical_redirect(original_url: str, final_url: str) -> bool:
+#     """Return True if the redirect is just a www <-> non-www (or http->https) normalisation."""
+#     return normalize_domain(original_url) == normalize_domain(str(final_url))
 
 
 def generate_hmac_token(domain: str) -> str:
@@ -144,7 +163,70 @@ def request_verification_file(payload: DomainCreate):
     }
 
 
+# @domain_router.post("/verify-file")
+# async def verify_verification_file(payload: DomainCreate):
+#     domain = payload.domain.lower().strip()
+#     canonical = normalize_domain(domain)
 
+#     expected_token = generate_hmac_token(canonical)
+
+#     short_hash = expected_token[:10]
+#     filename = f"{FILE_PREFIX}-{short_hash}.html"
+
+#     file_url = f"https://{canonical}/{filename}"
+
+#     headers = {"User-Agent": "VerifyBot/1.0"}
+
+#     try:
+#         async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+#             response = await client.get(file_url, headers=headers)
+
+#             if response.status_code != 200:
+#                 return {
+#                     "success": False,
+#                     "message": f"Verification file not found. Status code: {response.status_code}",
+#                     "checked_url": file_url
+#                 }
+
+#             # Allow canonical redirects (www <-> non-www, http -> https).
+#             # These are legitimate same-site redirects — the file is still on
+#             # the same domain the user controls.
+#             # Block any redirect that goes to a *different* root domain.
+#             final_url = str(response.url)
+
+#             if not is_valid_redirect(file_url, final_url):
+#                 return {
+#                     "success": False,
+#                     "message": (
+#                         f"Verification file not found at expected location. "
+#                         f"Request was redirected to '{final_url}'"
+#                     ),
+#                     "checked_url": file_url,
+#                     "redirected_to": final_url
+#                 }
+
+#             file_content = response.text.strip()
+
+#             if expected_token in file_content:
+#                 return {
+#                     "success": True,
+#                     "message": "Domain verified successfully using HTML file.",
+#                     "domain": canonical,
+#                     "checked_url": file_url
+#                 }
+#             else:
+#                 return {
+#                     "success": False,
+#                     "message": "Verification file found, but token does not match.",
+#                     "checked_url": file_url
+#                 }
+
+#     except httpx.RequestError as e:
+#         return {
+#             "success": False,
+#             "message": f"Connection error while accessing site: {str(e)}",
+#             "checked_url": file_url
+#         }
 
 async def fetch_and_validate(client, url, expected_token):
     try:
@@ -206,27 +288,42 @@ async def verify_verification_file(payload: DomainCreate):
 
     headers = {"User-Agent": "VerifyBot/1.0"}
 
-    async with httpx.AsyncClient(
-        follow_redirects=True,
-        timeout=10.0,
-        headers=headers
-    ) as client:
+    try:
 
-        for url in urls_to_try:
-            success, message, final_url = await fetch_and_validate(
-                client, url, expected_token
-            )
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=10.0,
+            headers=headers
+        ) as client:
 
-            if success:
-                return {
-                    "success": True,
-                    "message": "Domain verified successfully using HTML file.",
-                    "domain": canonical,
-                    "checked_url": final_url
-                }
+            for url in urls_to_try:
+                success, message, final_url = await fetch_and_validate(
+                    client, url, expected_token
+                )
 
+                if success:
+                    return {
+                        "success": True,
+                        "message": "Domain verified successfully using HTML file.",
+                        "domain": canonical,
+                        "checked_url": final_url
+                    }
+
+            return {
+                "success": False,
+                "message": "Verification file not found on both root and www domain.",
+                "checked_urls": urls_to_try
+            }
+
+    except httpx.RequestError as e:
         return {
             "success": False,
-            "message": "Verification file not found on both root and www domain.",
-            "checked_urls": urls_to_try
+            "message": f"Connection error while accessing site: {str(e)}",
         }
+
+
+
+
+
+
+
