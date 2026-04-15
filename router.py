@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import os
 import httpx
+from urllib.parse import urlparse
 from fastapi import APIRouter
 
 load_dotenv()
@@ -16,10 +17,32 @@ FILE_PREFIX = os.getenv("FILE_PREFIX")
 domain_router = APIRouter(prefix="/api/v1", tags=["domain"])
 
 
+def normalize_domain(domain: str) -> str:
+    """Strip scheme and www prefix to get a canonical root domain."""
+    # Remove scheme
+    for scheme in ("https://", "http://"):
+        if domain.startswith(scheme):
+            domain = domain[len(scheme):]
+    # Strip trailing slash
+    domain = domain.rstrip("/")
+    # Strip www. prefix so dadsmedia.com and www.dadsmedia.com use the same token
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain
+
+
+def normalize_path(path: str) -> str:
+    return path.rstrip("/")
+
+
+
 def generate_hmac_token(domain: str) -> str:
+    # Always use the canonical (no-www) domain so the token is identical
+    # whether the user submits dadsmedia.com or www.dadsmedia.com
+    canonical = normalize_domain(domain)
     return hmac.new(
         SECRET_KEY,
-        domain.encode(),
+        canonical.encode(),
         hashlib.sha256
     ).hexdigest()
 
@@ -93,14 +116,15 @@ async def verify_site(payload: DomainCreate):
 @domain_router.post("/request-file")
 def request_verification_file(payload: DomainCreate):
     domain = payload.domain.lower().strip()
+    canonical = normalize_domain(domain)
 
-    token = generate_hmac_token(domain)
+    token = generate_hmac_token(canonical)
 
     short_hash = token[:10]
 
     filename = f"{FILE_PREFIX}-{short_hash}.html"
 
-    file_content =f"""<!DOCTYPE html>
+    file_content = f"""<!DOCTYPE html>
         <html>
         <head>
             <title>Domain Verification</title>
@@ -112,73 +136,97 @@ def request_verification_file(payload: DomainCreate):
     """
 
     return {
-        "domain": domain,
+        "domain": canonical,
         "filename": filename,
         "file_content": file_content,
         "upload_instruction": "Upload this file to the root of your website.",
-        "expected_url": f"{domain}/{filename}"
+        "expected_url": f"https://{canonical}/{filename}"
     }
+
+
+
+
+async def fetch_and_validate(client, url, expected_token):
+    try:
+        res = await client.get(url)
+
+        if res.status_code != 200:
+            return False, f"Status {res.status_code}", url
+
+        final_url = str(res.url)
+
+        parsed_req = urlparse(url)
+        parsed_final = urlparse(final_url)
+
+        # Normalize domains
+        req_domain = parsed_req.netloc.replace("www.", "")
+        final_domain = parsed_final.netloc.replace("www.", "")
+
+        # Normalize paths
+        req_path = parsed_req.path.rstrip("/")
+        final_path = parsed_final.path.rstrip("/")
+
+        # Reject if path changed (means not actual file)
+        if req_path != final_path:
+            return False, f"Redirected to different path: {final_url}", url
+
+        # Reject if domain changed
+        if req_domain != final_domain:
+            return False, f"Redirected to different domain: {final_url}", url
+
+        content = res.text.strip()
+
+        # STRICT CHECK: token must exist
+        if expected_token in content:
+            return True, "Verified", final_url
+
+        # Detect fake 200 (homepage / fallback)
+        if len(content) > 5000:
+            return False, "Likely not a verification file (large HTML page)", url
+
+        return False, "Token not found in file", url
+
+    except Exception as e:
+        return False, str(e), url
 
 
 @domain_router.post("/verify-file")
 async def verify_verification_file(payload: DomainCreate):
     domain = payload.domain.lower().strip()
+    canonical = normalize_domain(domain)
 
-    expected_token = generate_hmac_token(domain)
-
+    expected_token = generate_hmac_token(canonical)
     short_hash = expected_token[:10]
     filename = f"{FILE_PREFIX}-{short_hash}.html"
 
-    target_url = domain if domain.startswith(("http://", "https://")) else f"https://{domain}"
-    file_url = f"{target_url}/{filename}"
-    
+    urls_to_try = [
+        f"https://{canonical}/{filename}",
+        f"https://www.{canonical}/{filename}"
+    ]
+
     headers = {"User-Agent": "VerifyBot/1.0"}
 
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-            response = await client.get(file_url, headers=headers)
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=10.0,
+        headers=headers
+    ) as client:
 
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "message": f"Verification file not found. Status code: {response.status_code}",
-                    "checked_url": file_url
-                }
+        for url in urls_to_try:
+            success, message, final_url = await fetch_and_validate(
+                client, url, expected_token
+            )
 
-            if str(response.url) != file_url:
-                return {
-                    "success": False,
-                    "message": f"The verification file was not found. Your server redirected the request to '{response.url}' ",
-                    "checked_url": file_url
-                }
-
-             # 3. Check content type — must be plain text, not HTML or JSON
-            content_type = response.headers.get("content-type", "")
-            if "text/plain" not in content_type:
-                return {
-                    "success": False,
-                    "message": f"Verification file not found (unexpected content type: {content_type}).",
-                    "checked_url": file_url
-                }
-
-            file_content = response.text.strip()
-
-            if expected_token in file_content:
+            if success:
                 return {
                     "success": True,
                     "message": "Domain verified successfully using HTML file.",
-                    "checked_url": file_url
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": "Verification file found, but token does not match.",
-                    "checked_url": file_url
+                    "domain": canonical,
+                    "checked_url": final_url
                 }
 
-    except httpx.RequestError as e:
         return {
             "success": False,
-            "message": f"Connection error while accessing site: {str(e)}",
-            "checked_url": file_url
+            "message": "Verification file not found on both root and www domain.",
+            "checked_urls": urls_to_try
         }
